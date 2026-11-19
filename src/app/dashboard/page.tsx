@@ -2,12 +2,14 @@
 "use client";
 
 import { useState } from "react";
+import { usePathname } from "next/navigation";
+import Link from "next/link";
 import {
   LayoutDashboard, Bike, ClipboardCheck, Wrench, ShieldCheck,
   FileText, Users, Settings, Search, Bell, ChevronDown,
   ArrowUpRight, ArrowRight, Clock3, CheckCircle2,
   AlertTriangle, Plus, MoreHorizontal, Activity, Menu,
-  Gauge, X, ScanLine, CalendarDays, Home
+  Gauge, X, ScanLine, Home
 } from "lucide-react";
 
 import {
@@ -50,12 +52,12 @@ const navGroups = [
     label: "MAIN",
     items: [
       { name: "Home Page", icon: Home, href: "/" },
+      { name: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
     ],
   },
   {
     label: "OVERVIEW",
     items: [
-      { name: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
       { name: "Vehicles", icon: Bike, href: "/vehicles" },
       { name: "Inspections", icon: ClipboardCheck, href: "/inspections" },
     ],
@@ -85,6 +87,7 @@ const statusStyle: Record<string, string> = {
 };
 
 export default function Dashboard() {
+  const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
   const [period, setPeriod] = useState("This Week");
   const [search, setSearch] = useState("");
@@ -96,7 +99,7 @@ export default function Dashboard() {
       <aside className={`fixed inset-y-0 left-0 z-50 flex w-[255px] flex-col bg-[#183D2D] text-white transition-transform duration-300 lg:translate-x-0 ${menuOpen ? "translate-x-0" : "-translate-x-full"}`}>
 
         <div className="flex h-[94px] items-center justify-between border-b border-white/10 px-6">
-          <a href="/dashboard" className="flex items-center gap-3">
+          <Link href="/dashboard" className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#E88B35] text-[#183D2D]">
               <Gauge size={26} strokeWidth={2.5} />
             </div>
@@ -105,7 +108,7 @@ export default function Dashboard() {
               <div className="text-[11px] font-bold tracking-[5px] text-[#E99A4B]">ENGINE</div>
               <div className="mt-1 text-[9px] text-white/50">Vehicle Inspection & Workshop</div>
             </div>
-          </a>
+          </Link>
           <button onClick={() => setMenuOpen(false)} className="lg:hidden">
             <X size={21} />
           </button>
@@ -120,11 +123,13 @@ export default function Dashboard() {
 
               <div className="space-y-1">
                 {group.items.map((item) => {
-                  const active = item.name === "Dashboard";
+                  const active = pathname === item.href;
                   return (
-                    <a
+                    <Link
                       key={item.name}
                       href={item.href}
+                      onClick={() => setMenuOpen(false)}
+                      aria-current={active ? "page" : undefined}
                       className={`flex items-center gap-3 rounded-xl px-3 py-3 text-[13px] transition-all ${
                         active
                           ? "bg-[#F2E6D2] font-bold text-[#203A2B]"
@@ -134,7 +139,7 @@ export default function Dashboard() {
                       <item.icon size={18} />
                       {item.name}
                       {active && <span className="ml-auto h-2 w-2 rounded-full bg-[#D98232]" />}
-                    </a>
+                    </Link>
                   );
                 })}
               </div>
@@ -154,9 +159,9 @@ export default function Dashboard() {
             <p className="mt-2 text-[11px] leading-5 text-white/60">
               Complete 260-point inspection for accurate vehicle health.
             </p>
-            <a href="/inspections" className="mt-3 flex items-center justify-center gap-2 rounded-xl bg-[#E88B35] py-2.5 text-xs font-bold text-[#17291E] hover:bg-[#F3A451]">
+            <Link href="/inspections" className="mt-3 flex items-center justify-center gap-2 rounded-xl bg-[#E88B35] py-2.5 text-xs font-bold text-[#17291E] hover:bg-[#F3A451]">
               New Inspection <ArrowRight size={15} />
-            </a>
+            </Link>
           </div>
         </div>
       </aside>
@@ -231,6 +236,9 @@ export default function Dashboard() {
               <div className="mb-4 flex items-center gap-2 text-[11px] font-bold tracking-[2px] text-[#F5A34D]">
                 <span className="h-[2px] w-7 bg-[#E88B35]" />
                 WORKSHOP OVERVIEW
+                <span className="ml-2 rounded-full bg-white/10 px-2.5 py-1 text-[9px] font-extrabold tracking-[1.5px] text-white">
+                  DEMO MODE
+                </span>
               </div>
 
               <h1 className="max-w-[600px] text-3xl font-bold leading-tight tracking-tight text-white md:text-[42px]">
@@ -245,12 +253,12 @@ export default function Dashboard() {
               </p>
 
               <div className="mt-7 flex flex-wrap gap-3">
-                <a href="/vehicles" className="flex items-center gap-2 rounded-xl bg-[#E88B35] px-5 py-3 text-sm font-bold text-[#1C2B20] transition hover:bg-[#F3A451]">
+                <Link href="/vehicles" className="flex items-center gap-2 rounded-xl bg-[#E88B35] px-5 py-3 text-sm font-bold text-[#1C2B20] transition hover:bg-[#F3A451]">
                   <Plus size={18} /> Register Vehicle
-                </a>
-                <a href="/inspections" className="flex items-center gap-2 rounded-xl border border-white/60 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10">
+                </Link>
+                <Link href="/inspections" className="flex items-center gap-2 rounded-xl border border-white/60 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10">
                   <ScanLine size={17} /> New Inspection
-                </a>
+                </Link>
               </div>
             </div>
           </section>
@@ -372,9 +380,9 @@ export default function Dashboard() {
                   </div>
                   <p className="mt-1 text-xs text-[#96988D]">Latest vehicle activity in your workshop</p>
                 </div>
-                <a href="/vehicles" className="flex items-center gap-1 text-xs font-bold text-[#28543D] hover:text-[#D98232]">
+                <Link href="/vehicles" className="flex items-center gap-1 text-xs font-bold text-[#28543D] hover:text-[#D98232]">
                   View All <ArrowRight size={15} />
-                </a>
+                </Link>
               </div>
 
               <div className="overflow-x-auto">
@@ -451,9 +459,9 @@ export default function Dashboard() {
                 ))}
               </div>
 
-              <a href="/reports" className="mt-7 flex w-full items-center justify-center gap-2 rounded-xl border border-[#E8E4D9] py-3 text-xs font-semibold text-[#526052] transition hover:bg-[#F7F5EF]">
+              <Link href="/reports" className="mt-7 flex w-full items-center justify-center gap-2 rounded-xl border border-[#E8E4D9] py-3 text-xs font-semibold text-[#526052] transition hover:bg-[#F7F5EF]">
                 View Activity History <ArrowRight size={14} />
-              </a>
+              </Link>
             </div>
           </section>
 
