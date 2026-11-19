@@ -1,5 +1,5 @@
 -- INSPECTION ENGINE foundation schema + exact checklist seed
--- Generated from Master_Inspection_Checklist VINOD.docx (260 checkpoints).
+-- Generated from Master_Inspection_Checklist.docx (260 checkpoints).
 create extension if not exists pgcrypto;
 
 create table if not exists public.profiles (

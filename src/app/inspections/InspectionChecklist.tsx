@@ -859,7 +859,7 @@ export default function InspectionChecklist() {
   return (
     <DemoModulePage
       title="260-point Vehicle Inspection"
-      description="Assess every applicable checkpoint using the VINOD master checklist. All progress, ratings and evidence remain in this browser demo."
+      description="Assess every applicable checkpoint using the master checklist. All progress, ratings and evidence remain in this browser demo."
       icon={ClipboardCheck}
     >
       <DemoPanel
