@@ -87,6 +87,8 @@ const assessmentSchema = z.object({
   isDisclosed: z.boolean().nullable(),
   countValue: z.string(),
   issueDescription: z.string(),
+  observation: z.string().default(""),
+  evidenceDue: z.boolean().default(false),
 });
 
 export type InspectionCheckpoint = z.infer<typeof checkpointSchema>;
@@ -114,6 +116,8 @@ export function createEmptyAssessment(): CheckpointAssessment {
     isDisclosed: null,
     countValue: "",
     issueDescription: "",
+    observation: "",
+    evidenceDue: false,
   };
 }
 
@@ -132,6 +136,70 @@ function isValidNumber(value: string) {
 
 function isPassOrFail(status: CheckpointAssessment["resultStatus"]) {
   return status === "pass" || status === "fail";
+}
+
+export function isAssessmentStarted(
+  checkpoint: InspectionCheckpoint,
+  assessment: CheckpointAssessment,
+  applicable: boolean | null | undefined,
+  autoValue: string
+) {
+  if (checkpoint.is_conditional && applicable !== true) return false;
+  const method = checkpoint.assessment_method;
+  if (method.startsWith("Auto-")) return autoValue.trim() !== "";
+  if (method.startsWith("1–5 scale")) {
+    return (
+      assessment.cosmeticScore !== null ||
+      (method.includes("Pass/Fail") && isPassOrFail(assessment.resultStatus))
+    );
+  }
+  if (method === "Measured") {
+    return (
+      assessment.measuredValue.trim() !== "" ||
+      assessment.measuredUnit.trim() !== ""
+    );
+  }
+  if (
+    method === "Measured vs spec" ||
+    method === "Age vs threshold" ||
+    method === "Pass/Fail (wear threshold)"
+  ) {
+    return (
+      assessment.measuredValue.trim() !== "" ||
+      assessment.measuredUnit.trim() !== "" ||
+      assessment.expectedValue.trim() !== "" ||
+      isPassOrFail(assessment.resultStatus)
+    );
+  }
+  if (method === "Recorded") {
+    return assessment.recordedValue.trim() !== "";
+  }
+  if (method === "Disclosed / Undisclosed") {
+    return assessment.isDisclosed !== null;
+  }
+  if (method === "Present/Absent") {
+    return (
+      assessment.recordedValue === "Present" ||
+      assessment.recordedValue === "Absent"
+    );
+  }
+  if (method === "Match + tamper check") {
+    return (
+      assessment.matchStatus !== null ||
+      isPassOrFail(assessment.resultStatus)
+    );
+  }
+  if (method.includes("Match")) return assessment.matchStatus !== null;
+  if (method.includes("count logged")) {
+    return (
+      assessment.countValue.trim() !== "" ||
+      isPassOrFail(assessment.resultStatus)
+    );
+  }
+  if (method.includes("Pass/Fail") || method === "Tamper check") {
+    return isPassOrFail(assessment.resultStatus);
+  }
+  return false;
 }
 
 export function isAssessmentComplete(

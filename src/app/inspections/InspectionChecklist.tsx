@@ -4,8 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bike,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   ClipboardCheck,
   FileCheck2,
+  Search,
   RotateCcw,
   Save,
   ShieldAlert,
@@ -30,12 +33,20 @@ import {
   hasRequiredEvidence,
   inspectionChecklist,
   isAssessmentComplete,
+  isAssessmentStarted,
   isCriticalFailure,
   sourceSectionLabels,
   type CheckpointAssessment,
   type DemoInspectionSession,
   type InspectionCheckpoint,
 } from "./checklist-model";
+import InspectionAdvisor from "./InspectionAdvisor";
+import {
+  buildInspectionAnalysis,
+  type InspectionAnalysisRow,
+} from "./inspection-analysis";
+
+type CheckpointFilter = "all" | "pending" | "completed" | "failed" | "critical";
 
 type DemoVehicle = {
   id: string;
@@ -185,6 +196,18 @@ function isCheckpointComplete(
   );
 }
 
+function isCheckpointFailed(
+  checkpoint: InspectionCheckpoint,
+  assessment: CheckpointAssessment
+) {
+  return (
+    assessment.resultStatus === "fail" ||
+    assessment.matchStatus === "mismatch" ||
+    (checkpoint.assessment_method === "Present/Absent" &&
+      assessment.recordedValue === "Absent")
+  );
+}
+
 function restoreDemoSession(vehicle: DemoVehicle) {
   const initialSession = createSessionForVehicle(vehicle);
   try {
@@ -258,6 +281,12 @@ export default function InspectionChecklist() {
   const [locationMessage, setLocationMessage] = useState("");
   const [locationCapturing, setLocationCapturing] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [checkpointFilter, setCheckpointFilter] =
+    useState<CheckpointFilter>("all");
+  const [currentCheckpointNo, setCurrentCheckpointNo] = useState(1);
+  const [analysisGenerated, setAnalysisGenerated] = useState(false);
+  const [analysisGeneratedAt, setAnalysisGeneratedAt] = useState<string | null>(null);
   const objectUrls = useRef(new Set<string>());
 
   const selectedVehicle =
@@ -314,6 +343,24 @@ export default function InspectionChecklist() {
   const currentSectionCheckpoints = activeCheckpoints.filter(
     (checkpoint) => checkpoint.section_no === activeSectionNo
   );
+  const applicableCheckpoints = useMemo(
+    () =>
+      activeCheckpoints.filter(
+        (checkpoint) =>
+          !checkpoint.is_conditional ||
+          session.applicability[String(checkpoint.checkpoint_no)] === true
+      ),
+    [activeCheckpoints, session.applicability]
+  );
+  const unresolvedApplicability = useMemo(
+    () =>
+      activeCheckpoints.filter(
+        (checkpoint) =>
+          checkpoint.is_conditional &&
+          session.applicability[String(checkpoint.checkpoint_no)] == null
+      ),
+    [activeCheckpoints, session.applicability]
+  );
   const progressByCheckpoint = useMemo(() => {
     const result = new Map<number, boolean>();
     activeCheckpoints.forEach((checkpoint) => {
@@ -338,42 +385,99 @@ export default function InspectionChecklist() {
     selectedVehicle,
     session,
   ]);
-  const completedCount = [...progressByCheckpoint.values()].filter(Boolean).length;
-  const pendingCount = activeCheckpoints.length - completedCount;
-  const failedCritical = activeCheckpoints.filter((checkpoint) =>
+  const analysisRows = useMemo<InspectionAnalysisRow[]>(
+    () =>
+      applicableCheckpoints.map((checkpoint) => {
+        const key = String(checkpoint.checkpoint_no);
+        const assessment = assessmentFor(session, checkpoint.checkpoint_no);
+        const applicable = session.applicability[key];
+        const autoValue = getAutoValue(
+          checkpoint,
+          selectedVehicle,
+          session,
+          currentGps,
+          now
+        );
+        const assessmentStarted = isAssessmentStarted(
+          checkpoint,
+          assessment,
+          applicable,
+          autoValue
+        );
+        const assessmentComplete = isAssessmentComplete(
+          checkpoint,
+          assessment,
+          applicable,
+          autoValue
+        );
+        const evidence = currentEvidence[key] ?? [];
+        const evidenceComplete = hasRequiredEvidence(
+          checkpoint.evidence_required,
+          evidence
+        );
+        const evidenceDue =
+          checkpoint.evidence_required !== "Not required" &&
+          (assessmentStarted || assessment.evidenceDue) &&
+          (!checkpoint.is_conditional || applicable === true);
+        return {
+          checkpoint,
+          sectionLabel: sourceSectionLabels[checkpoint.section_no],
+          sectionName: checkpoint.section_name,
+          assessment,
+          assessmentStarted,
+          assessmentComplete,
+          complete: assessmentComplete && evidenceComplete,
+          evidenceDue,
+          evidenceMissing: evidenceDue && !evidenceComplete,
+        };
+      }),
+    [
+      applicableCheckpoints,
+      currentEvidence,
+      currentGps,
+      now,
+      selectedVehicle,
+      session,
+    ]
+  );
+  const completedRows = analysisRows.filter((row) => row.complete);
+  const unassessedRows = analysisRows.filter((row) => !row.assessmentStarted);
+  const inProgressRows = analysisRows.filter(
+    (row) => row.assessmentStarted && !row.assessmentComplete
+  );
+  const assessedEvidencePendingRows = analysisRows.filter(
+    (row) => row.assessmentComplete && !row.complete
+  );
+  const evidenceMissingRows = analysisRows.filter((row) => row.evidenceMissing);
+  const completedCount = completedRows.length;
+  const pendingCount = applicableCheckpoints.length - completedCount;
+  const failedCritical = applicableCheckpoints.filter((checkpoint) =>
     isCriticalFailure(
       checkpoint,
       assessmentFor(session, checkpoint.checkpoint_no)
     )
   );
-  const evidenceMissingCount = activeCheckpoints.filter((checkpoint) => {
-    if (checkpoint.evidence_required === "Not required") return false;
-    const assessment = assessmentFor(session, checkpoint.checkpoint_no);
-    if (
-      checkpoint.is_conditional &&
-      session.applicability[String(checkpoint.checkpoint_no)] === false &&
-      assessment.resultStatus === "not_applicable"
-    ) {
-      return false;
-    }
-    return !hasRequiredEvidence(
-      checkpoint.evidence_required,
-      currentEvidence[String(checkpoint.checkpoint_no)] ?? []
-    );
-  }).length;
+  const failedCriticalRows = analysisRows.filter((row) =>
+    isCriticalFailure(row.checkpoint, row.assessment)
+  );
+  const evidenceMissingCount = evidenceMissingRows.length;
   const overallProgress =
-    activeCheckpoints.length === 0
+    applicableCheckpoints.length === 0
       ? 0
-      : Math.round((completedCount / activeCheckpoints.length) * 100);
+      : Math.round((completedCount / applicableCheckpoints.length) * 100);
   const inspectionComplete =
-    activeCheckpoints.length > 0 && pendingCount === 0;
+    applicableCheckpoints.length > 0 &&
+    pendingCount === 0 &&
+    unresolvedApplicability.length === 0;
+  const eligibleForSubmission = inspectionComplete;
   const saleReady = Boolean(finalizedAt && inspectionComplete && failedCritical.length === 0);
-  const safetyStatus = !finalizedAt
-    ? "Not finalized"
-    : failedCritical.length > 0
+  const safetyStatus =
+    failedCritical.length > 0
       ? "Blocked"
-      : "Cleared";
-  const cosmeticScores = activeCheckpoints
+      : finalizedAt
+        ? "Cleared"
+        : "Pending";
+  const cosmeticScores = applicableCheckpoints
     .filter(
       (checkpoint) =>
         checkpoint.classification === "Cosmetic" ||
@@ -389,7 +493,7 @@ export default function InspectionChecklist() {
       ? cosmeticScores.reduce((total, score) => total + score, 0) /
         cosmeticScores.length
       : null;
-  const cosmeticObservations = activeCheckpoints.filter((checkpoint) => {
+  const cosmeticObservations = applicableCheckpoints.filter((checkpoint) => {
     if (
       checkpoint.classification !== "Cosmetic" &&
       checkpoint.classification !== "Mixed"
@@ -398,6 +502,69 @@ export default function InspectionChecklist() {
     }
     return assessmentFor(session, checkpoint.checkpoint_no).cosmeticScore !== null;
   });
+  const inspectionAnalysis = buildInspectionAnalysis({
+    vehicleName: `${selectedVehicle.make} ${selectedVehicle.model}`,
+    rows: analysisRows,
+    applicableCheckpointCount: applicableCheckpoints.length,
+    unresolvedApplicabilityCount: unresolvedApplicability.length,
+    safetyStatus,
+    submissionEligible: eligibleForSubmission,
+  });
+  const searchNormalized = searchTerm.trim().toLowerCase();
+  const visibleCheckpoints = useMemo(() => {
+    const candidates = searchNormalized
+      ? activeCheckpoints
+      : currentSectionCheckpoints;
+    return candidates.filter((checkpoint) => {
+      if (
+        searchNormalized &&
+        !`${checkpoint.checkpoint_no} ${checkpoint.name}`
+          .toLowerCase()
+          .includes(searchNormalized.replace(/^#/, ""))
+      ) {
+        return false;
+      }
+
+      const key = String(checkpoint.checkpoint_no);
+      const assessment = assessmentFor(session, checkpoint.checkpoint_no);
+      const row = analysisRows.find(
+        (candidate) => candidate.checkpoint.checkpoint_no === checkpoint.checkpoint_no
+      );
+      const applicable = Boolean(row);
+      const notApplicable =
+        checkpoint.is_conditional &&
+        session.applicability[key] === false;
+
+      switch (checkpointFilter) {
+        case "pending":
+          return (
+            !notApplicable &&
+            (!applicable || !row?.complete)
+          );
+        case "completed":
+          return applicable && Boolean(row?.complete);
+        case "failed":
+          return isCheckpointFailed(checkpoint, assessment);
+        case "critical":
+          return (
+            checkpoint.classification === "Critical" ||
+            checkpoint.classification === "Mixed"
+          );
+        default:
+          return true;
+      }
+    });
+  }, [
+    activeCheckpoints,
+    analysisRows,
+    checkpointFilter,
+    currentSectionCheckpoints,
+    searchNormalized,
+    session,
+  ]);
+  const currentCheckpointIndex = activeCheckpoints.findIndex(
+    (checkpoint) => checkpoint.checkpoint_no === currentCheckpointNo
+  );
 
   function updateAssessment(
     checkpointNo: number,
@@ -450,10 +617,45 @@ export default function InspectionChecklist() {
   function handleVehicleChange(vehicleId: string) {
     setSelectedVehicleId(vehicleId);
     setActiveSectionNo(1);
+    setCurrentCheckpointNo(1);
     setFinalizedAt(null);
+    setAnalysisGenerated(false);
+    setAnalysisGeneratedAt(null);
     setLocationCapturing(false);
     setShowReport(false);
     setSavingMessage("");
+  }
+
+  function navigateToCheckpoint(checkpoint: InspectionCheckpoint) {
+    setSearchTerm("");
+    setCheckpointFilter("all");
+    setActiveSectionNo(checkpoint.section_no);
+    setCurrentCheckpointNo(checkpoint.checkpoint_no);
+    window.setTimeout(() => {
+      document
+        .getElementById(`checkpoint-${checkpoint.checkpoint_no}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 60);
+  }
+
+  function updateSearchTerm(value: string) {
+    setSearchTerm(value);
+    const query = value.trim().toLowerCase().replace(/^#/, "");
+    if (!query) return;
+    const firstMatch = activeCheckpoints.find((checkpoint) =>
+      `${checkpoint.checkpoint_no} ${checkpoint.name}`
+        .toLowerCase()
+        .includes(query)
+    );
+    if (firstMatch) {
+      setActiveSectionNo(firstMatch.section_no);
+      setCurrentCheckpointNo(firstMatch.checkpoint_no);
+    }
+  }
+
+  function generateAnalysis() {
+    setAnalysisGenerated(true);
+    setAnalysisGeneratedAt(new Date().toISOString());
   }
 
   function startInspection() {
@@ -579,7 +781,7 @@ export default function InspectionChecklist() {
   }
 
   function finalizeInspection() {
-    if (!inspectionComplete || finalizedAt) return;
+    if (!eligibleForSubmission || finalizedAt) return;
     const finalizedOn = new Date();
     setNow(finalizedOn.getTime());
     setFinalizedAt(finalizedOn.toISOString());
@@ -605,6 +807,12 @@ export default function InspectionChecklist() {
       [selectedVehicleId]: {},
     }));
     setGpsByVehicle((current) => ({ ...current, [selectedVehicleId]: null }));
+    setActiveSectionNo(1);
+    setCurrentCheckpointNo(1);
+    setSearchTerm("");
+    setCheckpointFilter("all");
+    setAnalysisGenerated(false);
+    setAnalysisGeneratedAt(null);
     setLocationMessage("");
     try {
       window.sessionStorage.removeItem(
@@ -623,17 +831,28 @@ export default function InspectionChecklist() {
   }
 
   function sectionStatus(sectionNo: number) {
-    const sectionCheckpoints = activeCheckpoints.filter(
+    const vehicleSectionCheckpoints = activeCheckpoints.filter(
       (checkpoint) => checkpoint.section_no === sectionNo
     );
-    if (sectionCheckpoints.length === 0) return null;
+    if (vehicleSectionCheckpoints.length === 0) return null;
+    const sectionCheckpoints = applicableCheckpoints.filter(
+      (checkpoint) => checkpoint.section_no === sectionNo
+    );
+    const unresolved = unresolvedApplicability.filter(
+      (checkpoint) => checkpoint.section_no === sectionNo
+    ).length;
     const complete = sectionCheckpoints.filter(
       (checkpoint) => progressByCheckpoint.get(checkpoint.checkpoint_no)
     ).length;
     return {
       complete,
       total: sectionCheckpoints.length,
-      percentage: Math.round((complete / sectionCheckpoints.length) * 100),
+      unresolved,
+      notApplicable: sectionCheckpoints.length === 0 && unresolved === 0,
+      percentage:
+        sectionCheckpoints.length === 0
+          ? 0
+          : Math.round((complete / sectionCheckpoints.length) * 100),
     };
   }
 
@@ -718,17 +937,17 @@ export default function InspectionChecklist() {
         )}
       </DemoPanel>
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <DemoMetricCard
           label="Completed checkpoints"
-          value={`${completedCount} / ${activeCheckpoints.length}`}
-          detail={`${overallProgress}% of applicable checks`}
+          value={`${completedCount} / ${applicableCheckpoints.length}`}
+          detail={`${overallProgress}% of resolved applicable checks`}
           icon={CheckCircle2}
         />
         <DemoMetricCard
           label="Pending checkpoints"
           value={pendingCount}
-          detail="Unassessed or missing required evidence"
+          detail="Applicable checks not fully complete"
           icon={ClipboardCheck}
           accent="amber"
         />
@@ -742,21 +961,30 @@ export default function InspectionChecklist() {
         <DemoMetricCard
           label="Evidence missing"
           value={evidenceMissingCount}
-          detail="Required photo/video not attached"
+          detail="Required and currently due"
           icon={FileCheck2}
           accent="amber"
+        />
+        <DemoMetricCard
+          label="Applicability to confirm"
+          value={unresolvedApplicability.length}
+          detail="Conditional equipment checks"
+          icon={ShieldCheck}
+          accent="orange"
         />
       </section>
 
       <DemoPanel
         title="Inspection completion"
-        description={`The master source contains 260 checkpoints. ${activeCheckpoints.length} apply to this ${selectedVehicle.vehicleType}; manual and scooter CVT sections are filtered by vehicle type.`}
+        description={`The master contains 260 checkpoints. ${applicableCheckpoints.length} are currently applicable to this ${selectedVehicle.vehicleType}. Vehicle-specific checks are filtered; unresolved equipment checks stay outside the progress denominator until applicability is confirmed.`}
       >
         <div className="mb-2 flex items-center justify-between gap-3 text-xs">
           <span className="font-semibold text-[#475448]">
-            Overall applicable-checkpoint completion
+            Completed / applicable checkpoints
           </span>
-          <span className="font-bold text-[#28543D]">{overallProgress}%</span>
+          <span className="font-bold text-[#28543D]">
+            {completedCount} / {applicableCheckpoints.length} · {overallProgress}%
+          </span>
         </div>
         <div
           className="h-3 overflow-hidden rounded-full bg-[#F0EEE7]"
@@ -806,6 +1034,11 @@ export default function InspectionChecklist() {
             Cosmetic scores never override critical safety failures.
           </span>
         </div>
+        {unresolvedApplicability.length > 0 && (
+          <p className="mt-3 rounded-lg bg-[#FFF6E9] px-3 py-2 text-[10px] text-[#80643A]">
+            {unresolvedApplicability.length} conditional checkpoint(s) need an equipment/applicability decision. They are excluded from the percentage denominator but prevent submission until resolved.
+          </p>
+        )}
       </DemoPanel>
 
       <DemoPanel
@@ -823,7 +1056,13 @@ export default function InspectionChecklist() {
               <button
                 key={section.section_no}
                 type="button"
-                onClick={() => setActiveSectionNo(section.section_no)}
+                onClick={() => {
+                  setActiveSectionNo(section.section_no);
+                  const first = activeCheckpoints.find(
+                    (checkpoint) => checkpoint.section_no === section.section_no
+                  );
+                  if (first) setCurrentCheckpointNo(first.checkpoint_no);
+                }}
                 disabled={!progress}
                 aria-current={isCurrent ? "step" : undefined}
                 className={`flex min-h-[58px] items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-left transition ${
@@ -835,7 +1074,11 @@ export default function InspectionChecklist() {
                 }`}
                 title={
                   progress
-                    ? `${progress.complete} of ${progress.total} checkpoints complete`
+                    ? progress.total > 0
+                      ? `${progress.complete} of ${progress.total} applicable checkpoints complete`
+                      : progress.unresolved > 0
+                        ? `${progress.unresolved} applicability decisions needed`
+                        : "Conditional checkpoints are not applicable"
                     : "Not applicable for this vehicle type"
                 }
               >
@@ -848,7 +1091,13 @@ export default function InspectionChecklist() {
                   </span>
                 </span>
                 <span className="shrink-0 text-[10px] font-bold">
-                  {progress ? `${progress.percentage}%` : "—"}
+                  {!progress
+                    ? "—"
+                    : progress.total > 0
+                      ? `${progress.percentage}%`
+                      : progress.unresolved > 0
+                        ? "Decide"
+                        : "N/A"}
                 </span>
               </button>
             );
@@ -859,74 +1108,250 @@ export default function InspectionChecklist() {
           <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
             <div>
               <p className="text-[10px] font-bold tracking-[1.5px] text-[#A27649]">
-                SECTION {sourceSectionLabels[activeSectionNo]}
+                {searchNormalized
+                  ? "SEARCH RESULTS"
+                  : `SECTION ${sourceSectionLabels[activeSectionNo]}`}
               </p>
               <h2 className="mt-1 text-lg font-bold text-[#244A36]">
-                {currentSection?.name}
+                {searchNormalized
+                  ? `${visibleCheckpoints.length} matching checkpoint(s)`
+                  : currentSection?.name}
               </h2>
             </div>
             <p className="text-[10px] text-[#92958A]">
-              {currentSectionCheckpoints.length > 0
-                ? `${sectionStatus(activeSectionNo)?.complete ?? 0} / ${currentSectionCheckpoints.length} complete`
-                : "Not applicable to this vehicle type"}
+              {searchNormalized
+                ? "Search spans all vehicle-active checkpoints."
+                : sectionStatus(activeSectionNo)?.total
+                ? `${sectionStatus(activeSectionNo)?.complete ?? 0} / ${sectionStatus(activeSectionNo)?.total} applicable complete`
+                : (sectionStatus(activeSectionNo)?.unresolved ?? 0) > 0
+                  ? `${sectionStatus(activeSectionNo)?.unresolved} applicability decisions needed`
+                  : "No applicable checks in this section"}
             </p>
+          </div>
+
+          <div className="mb-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+            <label className="relative block">
+              <Search
+                size={15}
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#92958A]"
+              />
+              <input
+                type="search"
+                value={searchTerm}
+                onChange={(event) => updateSearchTerm(event.target.value)}
+                placeholder="Search all applicable checkpoint names or numbers"
+                aria-label="Search checkpoints"
+                className="w-full rounded-xl border border-[#E8E3D8] bg-[#FAF9F5] py-2.5 pl-9 pr-3 text-xs text-[#344337] outline-none focus:border-[#63866B]"
+              />
+            </label>
+            <label className="flex items-center gap-2 text-[10px] font-semibold text-[#697267]">
+              Filter
+              <select
+                value={checkpointFilter}
+                onChange={(event) =>
+                  setCheckpointFilter(event.target.value as CheckpointFilter)
+                }
+                aria-label="Filter checkpoints"
+                className="rounded-xl border border-[#E8E3D8] bg-[#FAF9F5] px-3 py-2.5 text-xs text-[#344337] outline-none focus:border-[#63866B]"
+              >
+                <option value="all">All checks</option>
+                <option value="pending">Pending</option>
+                <option value="completed">Completed</option>
+                <option value="failed">Failed</option>
+                <option value="critical">Critical</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#F7F6F1] px-3 py-2.5">
+            <p className="text-[10px] text-[#697267]">
+              {currentCheckpointIndex >= 0
+                ? `Checkpoint ${currentCheckpointIndex + 1} of ${activeCheckpoints.length} in the vehicle-specific sequence`
+                : "Choose a checkpoint to navigate"}
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (currentCheckpointIndex > 0) {
+                    navigateToCheckpoint(
+                      activeCheckpoints[currentCheckpointIndex - 1]
+                    );
+                  }
+                }}
+                disabled={currentCheckpointIndex <= 0}
+                className={demoSubtleButtonClass}
+              >
+                <ChevronLeft size={14} /> Previous checkpoint
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (
+                    currentCheckpointIndex >= 0 &&
+                    currentCheckpointIndex < activeCheckpoints.length - 1
+                  ) {
+                    navigateToCheckpoint(
+                      activeCheckpoints[currentCheckpointIndex + 1]
+                    );
+                  }
+                }}
+                disabled={
+                  currentCheckpointIndex < 0 ||
+                  currentCheckpointIndex >= activeCheckpoints.length - 1
+                }
+                className={demoSubtleButtonClass}
+              >
+                Next checkpoint <ChevronRight size={14} />
+              </button>
+            </div>
           </div>
 
           {restoring ? (
             <div className="rounded-xl bg-[#FCFBF7] p-8 text-center text-xs text-[#92958A]">
               Restoring demo progress…
             </div>
-          ) : currentSectionCheckpoints.length === 0 ? (
+          ) : currentSectionCheckpoints.length === 0 && !searchNormalized ? (
             <div className="rounded-xl border border-dashed border-[#E8E3D8] bg-[#FCFBF7] p-8 text-center text-xs text-[#92958A]">
               This transmission section does not apply to the selected vehicle type.
             </div>
+          ) : visibleCheckpoints.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-[#E8E3D8] bg-[#FCFBF7] p-8 text-center text-xs text-[#92958A]">
+              No checkpoints match the current search and filter.
+            </div>
           ) : (
             <div className="space-y-3">
-              {currentSectionCheckpoints.map((checkpoint) => (
-                <CheckpointAssessmentCard
-                  key={checkpoint.checkpoint_no}
-                  checkpoint={checkpoint}
-                  assessment={assessmentFor(session, checkpoint.checkpoint_no)}
-                  applicable={
-                    session.applicability[String(checkpoint.checkpoint_no)]
-                  }
-                  autoValue={getAutoValue(
-                    checkpoint,
-                    selectedVehicle,
-                    session,
-                    currentGps,
-                    now
-                  )}
-                  evidence={
-                    currentEvidence[String(checkpoint.checkpoint_no)] ?? []
-                  }
-                  disabled={Boolean(finalizedAt) || restoring}
-                  selectedMechanic={session.selectedMechanic}
-                  mechanics={demoMechanics}
-                  locationMessage={locationMessage}
-                  locationCapturing={locationCapturing}
-                  onAssessmentChange={(changes) =>
-                    updateAssessment(checkpoint.checkpoint_no, changes)
-                  }
-                  onApplicabilityChange={(applicable) =>
-                    updateApplicability(checkpoint.checkpoint_no, applicable)
-                  }
-                  onMechanicChange={(mechanicId) =>
-                    updateMechanic(mechanicId)
-                  }
-                  onCaptureLocation={captureLocation}
-                  onEvidenceSelected={(mediaType, files) =>
-                    addEvidence(checkpoint.checkpoint_no, mediaType, files)
-                  }
-                  onRemoveEvidence={(evidenceId) =>
-                    removeEvidence(checkpoint.checkpoint_no, evidenceId)
-                  }
-                />
-              ))}
+              {visibleCheckpoints.map((checkpoint, index) => {
+                const sectionLabel = sourceSectionLabels[checkpoint.section_no];
+                const showSearchSection =
+                  searchNormalized &&
+                  (index === 0 ||
+                    visibleCheckpoints[index - 1].section_no !==
+                      checkpoint.section_no);
+                return (
+                  <div
+                    key={checkpoint.checkpoint_no}
+                    id={`checkpoint-${checkpoint.checkpoint_no}`}
+                    onFocusCapture={() =>
+                      setCurrentCheckpointNo(checkpoint.checkpoint_no)
+                    }
+                  >
+                    {showSearchSection && (
+                      <p className="mb-2 mt-4 text-[10px] font-bold uppercase tracking-wide text-[#A27649]">
+                        SECTION {sectionLabel} · {checkpoint.section_name}
+                      </p>
+                    )}
+                    <CheckpointAssessmentCard
+                      checkpoint={checkpoint}
+                      assessment={assessmentFor(session, checkpoint.checkpoint_no)}
+                      applicable={
+                        session.applicability[String(checkpoint.checkpoint_no)]
+                      }
+                      autoValue={getAutoValue(
+                        checkpoint,
+                        selectedVehicle,
+                        session,
+                        currentGps,
+                        now
+                      )}
+                      evidence={
+                        currentEvidence[String(checkpoint.checkpoint_no)] ?? []
+                      }
+                      disabled={Boolean(finalizedAt) || restoring}
+                      selectedMechanic={session.selectedMechanic}
+                      mechanics={demoMechanics}
+                      locationMessage={locationMessage}
+                      locationCapturing={locationCapturing}
+                      onAssessmentChange={(changes) =>
+                        updateAssessment(checkpoint.checkpoint_no, changes)
+                      }
+                      onApplicabilityChange={(applicable) =>
+                        updateApplicability(checkpoint.checkpoint_no, applicable)
+                      }
+                      onMechanicChange={updateMechanic}
+                      onCaptureLocation={captureLocation}
+                      onEvidenceSelected={(mediaType, files) =>
+                        addEvidence(checkpoint.checkpoint_no, mediaType, files)
+                      }
+                      onRemoveEvidence={(evidenceId) =>
+                        removeEvidence(checkpoint.checkpoint_no, evidenceId)
+                      }
+                    />
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
       </DemoPanel>
+
+      <DemoPanel
+        title="Final inspection review"
+        description="Review recorded results, outstanding items and submission eligibility before finalizing this browser-only demo inspection."
+      >
+        <div
+          className={`rounded-xl px-4 py-3 text-xs font-semibold ${
+            eligibleForSubmission
+              ? "bg-[#E7F4E6] text-[#28543D]"
+              : "bg-[#FFF6E9] text-[#80643A]"
+          }`}
+        >
+          Eligible for submission: {eligibleForSubmission ? "Yes" : "No"}
+          {eligibleForSubmission && failedCritical.length > 0
+            ? " — submission may record failures, but safety clearance remains blocked."
+            : !eligibleForSubmission
+              ? ` — ${unresolvedApplicability.length} applicability decision(s), ${pendingCount} pending applicable check(s).`
+              : ""}
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <CheckpointReviewList
+            title={`Completed checks (${completedRows.length})`}
+            rows={completedRows}
+            empty="No fully completed checks yet."
+          />
+          <CheckpointReviewList
+            title={`Unassessed applicable checks (${unassessedRows.length})`}
+            rows={unassessedRows}
+            empty="No unassessed applicable checks."
+          />
+          <CheckpointReviewList
+            title={`Assessment incomplete (${inProgressRows.length})`}
+            rows={inProgressRows}
+            empty="No partial assessments."
+          />
+          <CheckpointReviewList
+            title={`Failed critical checks (${failedCriticalRows.length})`}
+            rows={failedCriticalRows}
+            empty="No failed critical checks recorded."
+          />
+          <CheckpointReviewList
+            title={`Missing required evidence (${evidenceMissingRows.length})`}
+            rows={evidenceMissingRows}
+            empty="No currently due evidence is missing."
+          />
+          <CheckpointReviewList
+            title={`Assessed, evidence pending (${assessedEvidencePendingRows.length})`}
+            rows={assessedEvidencePendingRows}
+            empty="No completed assessments are waiting on evidence."
+          />
+        </div>
+      </DemoPanel>
+
+      <InspectionAdvisor
+        analysis={inspectionAnalysis}
+        vehicleName={`${selectedVehicle.make} ${selectedVehicle.model}`}
+        applicableCount={applicableCheckpoints.length}
+        unassessedRows={unassessedRows}
+        inProgressRows={inProgressRows}
+        missingEvidenceRows={evidenceMissingRows}
+        unresolvedApplicability={unresolvedApplicability}
+        safetyStatus={safetyStatus}
+        eligibleForSubmission={eligibleForSubmission}
+        finalized={Boolean(finalizedAt)}
+        analysisGenerated={analysisGenerated}
+        analysisGeneratedAt={analysisGeneratedAt}
+        onGenerate={generateAnalysis}
+      />
 
       <div className="flex flex-col justify-between gap-4 rounded-2xl border border-[#E8E4D9] bg-white p-5 sm:flex-row sm:items-center">
         <div className="flex items-start gap-3">
@@ -939,12 +1364,12 @@ export default function InspectionChecklist() {
             <p className="text-xs font-bold text-[#344337]">
               {finalizedAt
                 ? `Demo inspection finalized · safety ${safetyStatus.toLowerCase()}`
-                : inspectionComplete
-                  ? "All applicable checkpoints and required evidence are complete."
-                  : `${pendingCount} applicable checkpoint(s) remain incomplete.`}
+                : eligibleForSubmission
+                  ? "All applicable checkpoints, evidence and applicability decisions are complete."
+                  : `${pendingCount} applicable checkpoint(s) remain incomplete; ${unresolvedApplicability.length} conditional decision(s) remain.`}
             </p>
             <p className="mt-1 text-[10px] leading-5 text-[#92958A]">
-              Finalization is blocked until every applicable checkpoint is assessed and required evidence is attached. Critical failures block clearance and Sale Ready.
+              Submission requires every applicable assessment and due evidence. Critical failures block safety clearance and Sale Ready; unresolved equipment applicability blocks submission.
             </p>
           </div>
         </div>
@@ -969,12 +1394,12 @@ export default function InspectionChecklist() {
             <button
               type="button"
               onClick={finalizeInspection}
-              disabled={!inspectionComplete || restoring}
+              disabled={!eligibleForSubmission || restoring}
               className={demoButtonClass}
               title={
-                inspectionComplete
+                eligibleForSubmission
                   ? "Finalize this demo inspection"
-                  : "Complete all applicable checkpoints and required evidence first"
+                  : "Resolve conditional applicability and complete all applicable checkpoints and due evidence first"
               }
             >
               <CheckCircle2 size={14} /> Finalize demo inspection
@@ -1021,7 +1446,11 @@ export default function InspectionChecklist() {
 
             <div className="space-y-5 p-5 sm:p-7">
               <div className="grid gap-3 sm:grid-cols-3">
-                <ReportValue label="Applicable checks" value={activeCheckpoints.length} />
+                <ReportValue label="Applicable checks" value={applicableCheckpoints.length} />
+                <ReportValue
+                  label="Submission eligible"
+                  value={eligibleForSubmission ? "Yes" : "No"}
+                />
                 <ReportValue label="Critical failures" value={failedCritical.length} />
                 <ReportValue
                   label="Cosmetic average"
@@ -1060,9 +1489,13 @@ export default function InspectionChecklist() {
                           <span className="font-bold">
                             #{checkpoint.checkpoint_no} · {checkpoint.name}
                           </span>
-                          {assessment.issueDescription && (
+                          <span className="mt-1 block text-[10px]">
+                            SECTION {sourceSectionLabels[checkpoint.section_no]} ·{" "}
+                            {checkpoint.section_name}
+                          </span>
+                          {(assessment.issueDescription || assessment.observation) && (
                             <span className="mt-1 block">
-                              {assessment.issueDescription}
+                              {assessment.issueDescription || assessment.observation}
                             </span>
                           )}
                         </li>
@@ -1122,5 +1555,49 @@ function ReportValue({ label, value }: { label: string; value: string | number }
       </p>
       <p className="mt-1 text-xs font-semibold text-[#344337]">{value}</p>
     </div>
+  );
+}
+
+function CheckpointReviewList({
+  title,
+  rows,
+  empty,
+}: {
+  title: string;
+  rows: InspectionAnalysisRow[];
+  empty: string;
+}) {
+  return (
+    <details className="rounded-xl bg-[#F7F6F1] p-3">
+      <summary className="cursor-pointer text-[10px] font-bold text-[#526052]">
+        {title}
+      </summary>
+      {rows.length === 0 ? (
+        <p className="mt-2 text-[9px] text-[#92958A]">{empty}</p>
+      ) : (
+        <ul className="mt-2 max-h-48 space-y-1.5 overflow-y-auto">
+          {rows.map((row) => (
+            <li
+              key={row.checkpoint.checkpoint_no}
+              className="rounded-lg bg-white px-2.5 py-2 text-[9px] leading-4 text-[#697267]"
+            >
+              <span className="font-bold">
+                #{row.checkpoint.checkpoint_no} · {row.checkpoint.name}
+              </span>
+              <span className="block text-[#92958A]">
+                SECTION {row.sectionLabel} · {row.sectionName}
+              </span>
+              {(row.assessment.issueDescription ||
+                row.assessment.observation) && (
+                <span className="mt-1 block">
+                  {row.assessment.issueDescription ||
+                    row.assessment.observation}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </details>
   );
 }

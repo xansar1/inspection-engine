@@ -11,6 +11,7 @@ import {
 import {
   hasRequiredEvidence,
   isAssessmentComplete,
+  isAssessmentStarted,
   isCriticalFailure,
   type CheckpointAssessment,
   type InspectionCheckpoint,
@@ -103,6 +104,12 @@ export default function CheckpointAssessmentCard({
     applicable,
     autoValue
   );
+  const assessmentStarted = isAssessmentStarted(
+    checkpoint,
+    assessment,
+    applicable,
+    autoValue
+  );
   const evidenceComplete = hasRequiredEvidence(checkpoint.evidence_required, evidence);
   const complete = assessmentComplete && (isNotApplicable || evidenceComplete);
   const criticalFailure = isCriticalFailure(checkpoint, assessment);
@@ -110,6 +117,8 @@ export default function CheckpointAssessmentCard({
     ? "Critical failure"
     : isNotApplicable
       ? "Not Applicable"
+      : checkpoint.is_conditional && applicable !== true
+        ? "Applicability required"
       : complete
         ? "Complete"
         : "Unassessed";
@@ -124,6 +133,11 @@ export default function CheckpointAssessmentCard({
   const requiresVideo =
     checkpoint.evidence_required === "Video" ||
     checkpoint.evidence_required === "Photo+Video";
+  const hasEvidenceRequirement = requiresPhoto || requiresVideo;
+  const evidenceDue =
+    hasEvidenceRequirement &&
+    (assessmentStarted || assessment.evidenceDue) &&
+    (!checkpoint.is_conditional || applicable === true);
   const controlsDisabled = disabled || (checkpoint.is_conditional && applicable !== true);
 
   function handlePassFail(value: string) {
@@ -499,10 +513,25 @@ export default function CheckpointAssessmentCard({
           <p className="text-[10px] font-bold uppercase tracking-wide text-[#697267]">
             Evidence required: {checkpoint.evidence_required}
           </p>
-          {checkpoint.evidence_required === "Not required" && (
-            <span className="text-[10px] text-[#92958A]">No media required</span>
+              {!hasEvidenceRequirement && (
+                <span className="text-[10px] text-[#92958A]">No media required</span>
           )}
         </div>
+
+            {hasEvidenceRequirement && (
+              <label className="mt-2 inline-flex items-center gap-2 text-[10px] text-[#697267]">
+                <input
+                  type="checkbox"
+                  checked={assessment.evidenceDue || assessmentStarted}
+                  onChange={(event) =>
+                    onAssessmentChange({ evidenceDue: event.target.checked })
+                  }
+                  disabled={controlsDisabled || assessmentStarted}
+                  className="h-3.5 w-3.5 accent-[#28543D]"
+                />
+                Evidence is due now
+              </label>
+            )}
 
         {(requiresPhoto || requiresVideo) && (
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -528,9 +557,14 @@ export default function CheckpointAssessmentCard({
             )}
           </div>
         )}
-        {!evidenceComplete && checkpoint.evidence_required !== "Not required" && (
+        {evidenceDue && !evidenceComplete && (
           <p className="mt-2 inline-flex items-center gap-1.5 text-[10px] font-semibold text-[#A95719]">
             <ShieldAlert size={13} /> Required evidence is missing.
+          </p>
+        )}
+        {hasEvidenceRequirement && !evidenceDue && (
+          <p className="mt-2 text-[9px] text-[#92958A]">
+            Missing evidence is counted after assessment begins or evidence is marked due.
           </p>
         )}
         <p className="mt-2 text-[9px] leading-4 text-[#92958A]">
@@ -541,6 +575,21 @@ export default function CheckpointAssessmentCard({
         <p className="mt-4 border-t border-[#F0EEE7] pt-4 text-[10px] text-[#92958A]">
           Evidence is not required for a checkpoint recorded as Not Applicable.
         </p>
+      )}
+
+      {!isNotApplicable && (
+        <Field label="Inspector observations (optional)">
+          <textarea
+            value={assessment.observation}
+            onChange={(event) =>
+              onAssessmentChange({ observation: event.target.value })
+            }
+            disabled={controlsDisabled}
+            rows={2}
+            className={`${fieldClass} mt-1 resize-y`}
+            placeholder="Record observations in the inspector's own words"
+          />
+        </Field>
       )}
     </article>
   );
