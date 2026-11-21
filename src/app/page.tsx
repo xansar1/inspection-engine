@@ -275,10 +275,10 @@ export default function Home() {
 
           <div className="flex items-center gap-3">
             <a
-              href="/dashboard"
+              href="/login"
               className="flex items-center gap-2 rounded-xl bg-[#244A36] px-4 py-3 text-xs font-bold text-white transition hover:bg-[#345D45] sm:px-5"
             >
-              Dashboard <ArrowUpRight size={15} />
+              Staff Sign In <ArrowUpRight size={15} />
             </a>
           </div>
         </div>
@@ -324,10 +324,10 @@ export default function Home() {
 
             <div className="mt-9 flex flex-wrap gap-4">
               <a
-                href="/dashboard"
+                href="/login"
                 className="flex items-center gap-3 rounded-xl bg-[#E99B4C] px-7 py-4 text-sm font-bold text-[#233529] transition hover:bg-[#F3B16E]"
               >
-                Explore Dashboard <ArrowRight size={17} />
+                Staff Workspace <ArrowRight size={17} />
               </a>
 
               <a

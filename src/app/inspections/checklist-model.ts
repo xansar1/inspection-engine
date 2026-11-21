@@ -1,5 +1,4 @@
 import { z } from "zod";
-import rawChecklist from "@/data/inspection-checklist.seed.json";
 
 const checkpointSchema = z.object({
   checkpoint_no: z.number().int().min(1).max(260),
@@ -19,34 +18,94 @@ const sectionSchema = z.object({
 });
 
 const checklistSchema = z.object({
-  source: z.string(),
   sections: z.array(sectionSchema),
   checkpoints: z.array(checkpointSchema),
 });
 
-export const inspectionChecklist = checklistSchema.parse(rawChecklist);
+export type InspectionChecklistData = z.infer<typeof checklistSchema>;
 
-if (
-  inspectionChecklist.checkpoints.length !== 260 ||
-  inspectionChecklist.checkpoints.some(
-    (checkpoint, index) => checkpoint.checkpoint_no !== index + 1
-  ) ||
-  inspectionChecklist.sections.length !== 22
-) {
-  throw new Error("The inspection checklist seed must contain sections 1–22 and checkpoints 1–260.");
-}
+export function parseInspectionChecklist(
+  value: unknown
+): InspectionChecklistData {
+  const checklist = checklistSchema.parse(value);
 
-const sectionsByNumber = new Map(
-  inspectionChecklist.sections.map((section) => [section.section_no, section.name])
-);
+  if (
+    checklist.sections.length !== 22 ||
+    checklist.sections.some(
+      (section, index) => section.section_no !== index + 1
+    )
+  ) {
+    throw new Error(
+      `Supabase returned ${checklist.sections.length} sections; expected 22 ordered sections.`
+    );
+  }
 
-if (
-  inspectionChecklist.checkpoints.some(
-    (checkpoint) =>
-      sectionsByNumber.get(checkpoint.section_no) !== checkpoint.section_name
-  )
-) {
-  throw new Error("A checklist checkpoint references an unknown or mismatched section.");
+  if (
+    checklist.checkpoints.length !== 260 ||
+    checklist.checkpoints.some(
+      (checkpoint, index) => checkpoint.checkpoint_no !== index + 1
+    )
+  ) {
+    throw new Error(
+      `Supabase returned ${checklist.checkpoints.length} active checkpoints; expected the ordered 1–260 set.`
+    );
+  }
+
+  const sectionsByNumber = new Map(
+    checklist.sections.map((section) => [section.section_no, section.name])
+  );
+  if (
+    checklist.checkpoints.some(
+      (checkpoint) =>
+        sectionsByNumber.get(checkpoint.section_no) !== checkpoint.section_name
+    )
+  ) {
+    throw new Error(
+      "A Supabase checkpoint references an unknown or mismatched section."
+    );
+  }
+
+  const fuelLidLock = checklist.checkpoints.find(
+    (checkpoint) => checkpoint.checkpoint_no === 115
+  );
+  const tankShrouds = checklist.checkpoints.find(
+    (checkpoint) => checkpoint.checkpoint_no === 125
+  );
+  if (fuelLidLock?.active_for !== "scooter") {
+    throw new Error("Supabase checkpoint 115 must be scooter-only.");
+  }
+  if (tankShrouds?.active_for !== "motorcycle") {
+    throw new Error("Supabase checkpoint 125 must be motorcycle-only.");
+  }
+
+  const applicabilityCounts = {
+    motorcycle: { applicable: 250, unresolved: 4 },
+    scooter: { applicable: 243, unresolved: 5 },
+  };
+  for (const vehicleType of ["motorcycle", "scooter"] as const) {
+    const active = checklist.checkpoints.filter(
+      (checkpoint) =>
+        checkpoint.active_for === "both" ||
+        checkpoint.active_for === vehicleType
+    );
+    const applicable = active.filter(
+      (checkpoint) => !checkpoint.is_conditional
+    ).length;
+    const unresolved = active.filter(
+      (checkpoint) => checkpoint.is_conditional
+    ).length;
+    const expected = applicabilityCounts[vehicleType];
+    if (
+      applicable !== expected.applicable ||
+      unresolved !== expected.unresolved
+    ) {
+      throw new Error(
+        `Supabase checklist applicability is invalid for ${vehicleType}: expected ${expected.applicable} applicable and ${expected.unresolved} unresolved conditional checkpoints; received ${applicable} and ${unresolved}.`
+      );
+    }
+  }
+
+  return checklist;
 }
 
 export const sourceSectionLabels: Record<number, string> = {
@@ -88,6 +147,7 @@ const assessmentSchema = z.object({
   countValue: z.string(),
   issueDescription: z.string(),
   observation: z.string().default(""),
+  applicabilityReason: z.string().default(""),
   evidenceDue: z.boolean().default(false),
 });
 
@@ -95,14 +155,14 @@ export type InspectionCheckpoint = z.infer<typeof checkpointSchema>;
 export type InspectionSection = z.infer<typeof sectionSchema>;
 export type CheckpointAssessment = z.infer<typeof assessmentSchema>;
 
-export const demoSessionSchema = z.object({
+export const inspectionSessionSchema = z.object({
   startedAt: z.string().nullable(),
   selectedMechanic: z.string(),
   applicability: z.record(z.string(), z.boolean().nullable()),
   assessments: z.record(z.string(), assessmentSchema),
 });
 
-export type DemoInspectionSession = z.infer<typeof demoSessionSchema>;
+export type InspectionSessionState = z.infer<typeof inspectionSessionSchema>;
 
 export function createEmptyAssessment(): CheckpointAssessment {
   return {
@@ -117,11 +177,12 @@ export function createEmptyAssessment(): CheckpointAssessment {
     countValue: "",
     issueDescription: "",
     observation: "",
+    applicabilityReason: "",
     evidenceDue: false,
   };
 }
 
-export function createEmptyDemoSession(): DemoInspectionSession {
+export function createEmptyInspectionSession(): InspectionSessionState {
   return {
     startedAt: null,
     selectedMechanic: "",

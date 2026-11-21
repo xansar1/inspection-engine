@@ -22,9 +22,12 @@ export type LocalEvidence = {
   name: string;
   mediaType: "photo" | "video";
   previewUrl: string;
+  file?: File;
+  storagePath?: string;
+  databaseId?: string;
 };
 
-export type DemoMechanic = {
+export type WorkshopMechanic = {
   id: string;
   name: string;
 };
@@ -33,15 +36,19 @@ type CheckpointAssessmentCardProps = {
   checkpoint: InspectionCheckpoint;
   assessment: CheckpointAssessment;
   applicable: boolean | null | undefined;
+  applicabilityAuthorized: boolean;
   autoValue: string;
   evidence: LocalEvidence[];
   disabled: boolean;
   selectedMechanic: string;
-  mechanics: DemoMechanic[];
+  mechanics: WorkshopMechanic[];
   locationMessage: string;
   locationCapturing: boolean;
+  canAuthorizeNotApplicable: boolean;
+  authorizingNotApplicable: boolean;
   onAssessmentChange: (changes: Partial<CheckpointAssessment>) => void;
   onApplicabilityChange: (applicable: boolean | null) => void;
+  onAuthorizeNotApplicable: () => void;
   onMechanicChange: (mechanicId: string) => void;
   onCaptureLocation: () => void;
   onEvidenceSelected: (
@@ -62,6 +69,7 @@ export default function CheckpointAssessmentCard({
   checkpoint,
   assessment,
   applicable,
+  applicabilityAuthorized,
   autoValue,
   evidence,
   disabled,
@@ -69,8 +77,11 @@ export default function CheckpointAssessmentCard({
   mechanics,
   locationMessage,
   locationCapturing,
+  canAuthorizeNotApplicable,
+  authorizingNotApplicable,
   onAssessmentChange,
   onApplicabilityChange,
+  onAuthorizeNotApplicable,
   onMechanicChange,
   onCaptureLocation,
   onEvidenceSelected,
@@ -111,12 +122,16 @@ export default function CheckpointAssessmentCard({
     autoValue
   );
   const evidenceComplete = hasRequiredEvidence(checkpoint.evidence_required, evidence);
-  const complete = assessmentComplete && (isNotApplicable || evidenceComplete);
+  const complete =
+    assessmentComplete &&
+    (isNotApplicable ? applicabilityAuthorized : evidenceComplete);
   const criticalFailure = isCriticalFailure(checkpoint, assessment);
   const statusLabel = criticalFailure
     ? "Critical failure"
     : isNotApplicable
-      ? "Not Applicable"
+      ? applicabilityAuthorized
+        ? "N/A authorized"
+        : "Awaiting admin approval"
       : checkpoint.is_conditional && applicable !== true
         ? "Applicability required"
       : complete
@@ -183,7 +198,8 @@ export default function CheckpointAssessmentCard({
       </div>
 
       {checkpoint.is_conditional && (
-        <label className="mt-4 block rounded-xl border border-[#EEECE5] bg-[#FCFBF7] p-3">
+        <div className="mt-4 rounded-xl border border-[#EEECE5] bg-[#FCFBF7] p-3">
+          <label className="block">
           <span className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-[#697267]">
             <CircleHelp size={13} /> Applicable / equipped?
           </span>
@@ -204,7 +220,50 @@ export default function CheckpointAssessmentCard({
             <option value="yes">Yes — assess this checkpoint</option>
             <option value="no">No — Not Applicable</option>
           </select>
-        </label>
+          </label>
+          {applicable === false && (
+            <div className="mt-3 space-y-2">
+              <label className="block text-[10px] font-bold text-[#697267]">
+                Inspector reason (required)
+                <textarea
+                  value={assessment.applicabilityReason}
+                  onChange={(event) =>
+                    onAssessmentChange({
+                      applicabilityReason: event.target.value,
+                    })
+                  }
+                  disabled={disabled}
+                  maxLength={500}
+                  rows={2}
+                  className={`${fieldClass} mt-1`}
+                  placeholder="Explain why this conditional checkpoint does not apply"
+                />
+              </label>
+              <p className="text-[10px] leading-4 text-[#8A6A3F]">
+                Not-applicable decisions require an active admin authorization before submission.
+              </p>
+              {canAuthorizeNotApplicable && (
+                <button
+                  type="button"
+                  onClick={onAuthorizeNotApplicable}
+                  disabled={
+                    disabled ||
+                    authorizingNotApplicable ||
+                    applicabilityAuthorized ||
+                    assessment.applicabilityReason.trim().length < 10
+                  }
+                  className="rounded-lg bg-[#315D40] px-3 py-2 text-[10px] font-bold text-white transition hover:bg-[#244A31] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {authorizingNotApplicable
+                    ? "Authorizing..."
+                    : applicabilityAuthorized
+                      ? "Admin authorized"
+                      : "Authorize not applicable"}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       )}
 
       {!isNotApplicable && (
@@ -212,7 +271,7 @@ export default function CheckpointAssessmentCard({
           {method.startsWith("Auto-") ? (
             <div className="rounded-xl bg-[#F3F4ED] p-3 sm:col-span-2">
               <p className="text-[9px] font-bold uppercase tracking-wide text-[#92958A]">
-                Automatically captured demo value
+                Automatically captured value
               </p>
               <p className="mt-1 break-words text-xs font-semibold text-[#344337]">
                 {autoValue || "Not captured"}
@@ -235,14 +294,14 @@ export default function CheckpointAssessmentCard({
                     </p>
                   )}
                   <p className="mt-1 text-[9px] leading-4 text-[#92958A]">
-                    GPS is requested only when you choose to capture it and stays in this page session.
+                    GPS is requested only when you choose to capture it and is saved with the inspection.
                   </p>
                 </div>
               )}
               {checkpoint.checkpoint_no === 18 && (
                 <label className="mt-3 block max-w-sm">
                   <span className="mb-1.5 block text-[10px] font-semibold text-[#697267]">
-                    Demo mechanic ID
+                    Assigned mechanic
                   </span>
                   <select
                     value={selectedMechanic}
@@ -250,7 +309,7 @@ export default function CheckpointAssessmentCard({
                     disabled={disabled}
                     className={fieldClass}
                   >
-                    <option value="">Select a demo mechanic</option>
+                    <option value="">Select a workshop mechanic</option>
                     {mechanics.map((mechanic) => (
                       <option key={mechanic.id} value={mechanic.id}>
                         {mechanic.id} · {mechanic.name}
@@ -568,7 +627,7 @@ export default function CheckpointAssessmentCard({
           </p>
         )}
         <p className="mt-2 text-[9px] leading-4 text-[#92958A]">
-          Evidence previews remain local to this demo page and are never uploaded.
+          Selected evidence uploads to private inspection storage when progress is saved.
         </p>
       </div>
       ) : (

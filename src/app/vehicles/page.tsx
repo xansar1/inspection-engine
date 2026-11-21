@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -18,6 +18,8 @@ import {
   Gauge,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { getInspectionActor } from "@/lib/supabase/staff";
+import AuthControls from "@/app/_components/AuthControls";
 
 type Vehicle = {
   id: string;
@@ -38,81 +40,6 @@ type Vehicle = {
   created_at: string;
 };
 
-const demoVehicles: Vehicle[] = [
-  {
-    id: "demo-ka03-mn4821",
-    registration_number: "KA 03 MN 4821",
-    make: "Royal Enfield",
-    model: "Classic 350",
-    variant: "Signals Edition",
-    vehicle_type: "motorcycle",
-    fuel_type: "Petrol",
-    engine_capacity: "349cc",
-    manufacturing_year: 2022,
-    registration_year: 2022,
-    colour: "Desert Sand",
-    chassis_number: "ME3U3S5C2NK104821",
-    engine_number: "U3S5C2NK104821",
-    odometer_reading_km: 18450,
-    owner_count: 1,
-    created_at: "2025-01-18T10:30:00.000Z",
-  },
-  {
-    id: "demo-mh12-qx6314",
-    registration_number: "MH 12 QX 6314",
-    make: "Bajaj",
-    model: "Pulsar N160",
-    variant: "Dual Channel ABS",
-    vehicle_type: "motorcycle",
-    fuel_type: "Petrol",
-    engine_capacity: "164.82cc",
-    manufacturing_year: 2023,
-    registration_year: 2023,
-    colour: "Brooklyn Black",
-    chassis_number: "MD2A36FY7PWC06314",
-    engine_number: "AFYWPB06314",
-    odometer_reading_km: 12680,
-    owner_count: 1,
-    created_at: "2025-02-04T08:15:00.000Z",
-  },
-  {
-    id: "demo-tn09-cf2758",
-    registration_number: "TN 09 CF 2758",
-    make: "TVS",
-    model: "Jupiter 125",
-    variant: "SmartXonnect",
-    vehicle_type: "scooter",
-    fuel_type: "Petrol",
-    engine_capacity: "124.8cc",
-    manufacturing_year: 2021,
-    registration_year: 2021,
-    colour: "Walnut Brown",
-    chassis_number: "MD626BG47M1C02758",
-    engine_number: "BG4AM1C02758",
-    odometer_reading_km: 23890,
-    owner_count: 2,
-    created_at: "2025-02-21T12:45:00.000Z",
-  },
-  {
-    id: "demo-dl8s-bv9042",
-    registration_number: "DL 8S BV 9042",
-    make: "Honda",
-    model: "Activa 6G",
-    variant: "Deluxe",
-    vehicle_type: "scooter",
-    fuel_type: "Petrol",
-    engine_capacity: "109.51cc",
-    manufacturing_year: 2024,
-    registration_year: 2024,
-    colour: "Pearl Precious White",
-    chassis_number: "ME4JF9120RT09042",
-    engine_number: "JF91ERT09042",
-    odometer_reading_km: 6420,
-    owner_count: 1,
-    created_at: "2025-03-10T09:00:00.000Z",
-  },
-];
-
 const initialForm = {
   registration_number: "",
   make: "",
@@ -131,10 +58,12 @@ const initialForm = {
 };
 
 export default function VehiclesPage() {
+  const supabase = useMemo(() => createClient(), []);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const [demoRegistrations, setDemoRegistrations] = useState<Vehicle[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isDemoMode, setIsDemoMode] = useState(false);
+  const [authorized, setAuthorized] = useState(false);
+  const [canRegister, setCanRegister] = useState(false);
+  const [actorId, setActorId] = useState("");
   const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState("");
@@ -144,42 +73,53 @@ export default function VehiclesPage() {
   const [success, setSuccess] = useState("");
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
 
-  async function loadVehicles() {
+  const loadVehicles = useCallback(async () => {
     setLoading(true);
     setError("");
-
-    if (isDemoMode) {
-      setVehicles([...demoRegistrations, ...demoVehicles]);
-      setLoading(false);
-      return;
-    }
-
     try {
-      const supabase = createClient();
+      const actor = await getInspectionActor(supabase);
+      if (!actor) {
+        setAuthorized(false);
+        setCanRegister(false);
+        setActorId("");
+        setVehicles([]);
+        return;
+      }
+
+      setAuthorized(true);
+      setCanRegister(
+        actor.profile.role === "admin" || actor.profile.role === "inspector"
+      );
+      setActorId(actor.profile.id);
       const { data, error: fetchError } = await supabase
         .from("vehicles")
-        .select("*")
+        .select(
+          "id, registration_number, make, model, variant, vehicle_type, fuel_type, engine_capacity, manufacturing_year, registration_year, colour, chassis_number, engine_number, odometer_reading_km, owner_count, created_at"
+        )
         .order("created_at", { ascending: false });
 
-      if (fetchError || !data?.length) {
-        setVehicles(demoVehicles);
-        setIsDemoMode(true);
-      } else {
-        setVehicles(data as Vehicle[]);
+      if (fetchError) {
+        throw new Error(`Vehicles could not be loaded: ${fetchError.message}`);
       }
-    } catch {
-      setVehicles(demoVehicles);
-      setIsDemoMode(true);
+      setVehicles(data ?? []);
+    } catch (loadError: unknown) {
+      setAuthorized(false);
+      setCanRegister(false);
+      setActorId("");
+      setVehicles([]);
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Vehicles could not be loaded from Supabase."
+      );
     } finally {
       setLoading(false);
     }
-  }
+  }, [supabase]);
 
   useEffect(() => {
-    loadVehicles();
-    // Initial load only
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    void loadVehicles();
+  }, [loadVehicles]);
 
   const filteredVehicles = useMemo(() => {
     return vehicles.filter((vehicle) => {
@@ -238,67 +178,43 @@ export default function VehiclesPage() {
         ? Number(form.odometer_reading_km)
         : null,
       owner_count: form.owner_count ? Number(form.owner_count) : null,
+      created_by: actorId,
     };
 
-    const addToDemo = () => {
-      const normalizedRegistration = payload.registration_number;
-      if (
-        (isDemoMode ? vehicles : demoVehicles).some(
-          (vehicle) => vehicle.registration_number === normalizedRegistration
-        )
-      ) {
-        setError("This registration number already exists in this demo session.");
-        setSaving(false);
-        return;
-      }
-
-      const demoVehicle: Vehicle = {
-        ...payload,
-        id: `demo-${Date.now()}`,
-        created_at: new Date().toISOString(),
-      };
-      setDemoRegistrations((current) => [demoVehicle, ...current]);
-      setVehicles((current) => [demoVehicle, ...current]);
-      setSuccess(
-        "Vehicle added to this demo session only. It has not been saved to the database."
-      );
-      setForm(initialForm);
-      setShowForm(false);
+    if (!authorized || !actorId) {
+      setError("An authenticated active inspector or admin profile is required.");
       setSaving(false);
-    };
-
-    if (isDemoMode) {
-      addToDemo();
       return;
     }
 
     try {
-      const supabase = createClient();
-      const { error: insertError } = await supabase
+      const { data, error: insertError } = await supabase
         .from("vehicles")
-        .insert(payload);
+        .insert(payload)
+        .select(
+          "id, registration_number, make, model, variant, vehicle_type, fuel_type, engine_capacity, manufacturing_year, registration_year, colour, chassis_number, engine_number, odometer_reading_km, owner_count, created_at"
+        )
+        .single();
 
       if (insertError?.code === "23505") {
         setError("This registration number already exists.");
-        setSaving(false);
         return;
       }
-
       if (insertError) {
-        setVehicles(demoVehicles);
-        setIsDemoMode(true);
-        addToDemo();
-        return;
+        throw new Error(`Vehicle registration failed: ${insertError.message}`);
       }
+      if (!data) throw new Error("Supabase did not confirm the registered vehicle.");
 
-      setSuccess("Vehicle registered successfully.");
+      setVehicles((current) => [data, ...current]);
+      setSuccess("Vehicle registered in Supabase.");
       setForm(initialForm);
       setShowForm(false);
-      await loadVehicles();
-    } catch {
-      setVehicles(demoVehicles);
-      setIsDemoMode(true);
-      addToDemo();
+    } catch (registrationError: unknown) {
+      setError(
+        registrationError instanceof Error
+          ? registrationError.message
+          : "Vehicle registration failed."
+      );
     } finally {
       setSaving(false);
     }
@@ -334,31 +250,48 @@ export default function VehiclesPage() {
                 <h1 className="text-2xl font-bold tracking-tight">
                   Vehicle Management
                 </h1>
-                {isDemoMode && (
-                  <span className="rounded-full bg-[#FFF0DD] px-3 py-1 text-[10px] font-extrabold tracking-wider text-[#A95719]">
-                    DEMO MODE
-                  </span>
-                )}
                 <p className="mt-1 text-sm text-[#858A80]">
-                  {isDemoMode
-                    ? "Sample vehicles and registrations are stored in this session only"
-                    : "Register, manage and track workshop vehicles"}
+                  Register and manage workshop vehicles stored in Supabase
                 </p>
               </div>
             </div>
           </div>
 
-          <button
-            onClick={() => {
-              setError("");
-              setSuccess("");
-              setShowForm(true);
-            }}
-            className="inline-flex items-center gap-2 rounded-xl bg-[#E98A32] px-5 py-3 text-sm font-bold text-[#172E22] shadow-sm transition hover:bg-[#D87925]"
-          >
-            <Plus size={18} /> Register Vehicle
-          </button>
+          <div className="flex items-center gap-3">
+            <AuthControls />
+            {canRegister && (
+              <button
+                disabled={!authorized || loading}
+                onClick={() => {
+                  setError("");
+                  setSuccess("");
+                  setShowForm(true);
+                }}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#E98A32] px-5 py-3 text-sm font-bold text-[#172E22] shadow-sm transition hover:bg-[#D87925] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Plus size={18} /> Register Vehicle
+              </button>
+            )}
+          </div>
         </header>
+
+        {!authorized && !loading && !error && (
+          <div
+            className="mb-5 flex items-start gap-3 rounded-xl border border-[#E8D6B8] bg-[#FFF6E9] p-4 text-sm text-[#80643A]"
+            role="alert"
+          >
+            <AlertCircle size={19} className="mt-0.5 shrink-0" />
+            <span>
+              Sign in with an active workshop account to view vehicles. Vehicle registration is restricted to admin and inspector roles.
+            </span>
+            <Link
+              href="/login"
+              className="ml-auto shrink-0 rounded-lg bg-white px-3 py-2 text-xs font-bold text-[#28543D]"
+            >
+              Staff sign in
+            </Link>
+          </div>
+        )}
 
         {/* ALERTS */}
         {error && (

@@ -6,11 +6,12 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 import {
   LayoutDashboard, Bike, ClipboardCheck, Wrench, ShieldCheck,
-  FileText, Users, Settings, Search, Bell, ChevronDown,
+  FileText, Users, Settings, Search, Bell,
   ArrowUpRight, ArrowRight, Clock3, CheckCircle2,
   AlertTriangle, Plus, MoreHorizontal, Activity, Menu,
   Gauge, X, ScanLine, Home
 } from "lucide-react";
+import AuthControls from "@/app/_components/AuthControls";
 
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis,
@@ -207,13 +208,8 @@ export default function Dashboard() {
               <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-[#E88B35]" />
             </button>
 
-            <div className="flex items-center gap-2 border-l border-[#E8E3D8] pl-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#183D2D] text-sm font-bold text-white">A</div>
-              <div className="hidden sm:block">
-                <div className="text-xs font-bold">Administrator</div>
-                <div className="text-[10px] text-[#92948A]">Super Admin</div>
-              </div>
-              <ChevronDown size={15} className="text-[#92948A]" />
+            <div className="border-l border-[#E8E3D8] pl-3">
+              <AuthControls />
             </div>
           </div>
         </header>

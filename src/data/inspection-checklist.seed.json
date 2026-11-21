@@ -1353,7 +1353,7 @@
       "classification": "Critical",
       "assessment_method": "Pass/Fail",
       "evidence_required": "Video",
-      "active_for": "both",
+      "active_for": "scooter",
       "is_conditional": true
     },
     {
@@ -1463,7 +1463,7 @@
       "classification": "Mixed",
       "assessment_method": "1–5 scale + Pass/Fail",
       "evidence_required": "Photo",
-      "active_for": "both",
+      "active_for": "motorcycle",
       "is_conditional": false
     },
     {

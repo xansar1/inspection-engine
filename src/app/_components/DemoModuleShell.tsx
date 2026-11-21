@@ -2,11 +2,14 @@ import Link from "next/link";
 import { ArrowLeft, Bike } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import AuthControls from "./AuthControls";
 
 type DemoModulePageProps = {
   title: string;
   description: string;
   icon: LucideIcon;
+  modeLabel?: string;
+  notice?: string;
   children: ReactNode;
 };
 
@@ -14,6 +17,8 @@ export function DemoModulePage({
   title,
   description,
   icon: Icon,
+  modeLabel = "DEMO MODE",
+  notice = "Sample interface and records for demonstration only. No live workshop data is displayed.",
   children,
 }: DemoModulePageProps) {
   return (
@@ -36,8 +41,9 @@ export function DemoModulePage({
 
           <div className="flex items-center gap-3">
             <span className="rounded-full bg-[#FFF0E0] px-3 py-1.5 text-[10px] font-extrabold tracking-[1.5px] text-[#B66A2B]">
-              DEMO MODE
+              {modeLabel}
             </span>
+            <AuthControls />
             <Link
               href="/dashboard"
               className="inline-flex items-center gap-2 rounded-xl border border-[#E8E3D8] bg-white px-3.5 py-2.5 text-xs font-bold text-[#28543D] transition hover:bg-[#F2EFE6]"
@@ -68,8 +74,7 @@ export function DemoModulePage({
               </div>
             </div>
             <p className="max-w-[260px] rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-[11px] leading-5 text-white/70">
-              Sample interface and records for demonstration only. No live
-              workshop data is displayed.
+              {notice}
             </p>
           </div>
         </div>
