@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { LogOut, Loader2, UserRound } from "lucide-react";
+import { ClipboardCheck, LogOut, Loader2, UserRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -147,6 +147,17 @@ export default function AuthControls() {
             (authState.status === "error" ? "verification unavailable" : "unauthorized")}
         </p>
       </div>
+      {authState.actor?.profile.role === "admin" && (
+        <Link
+          href="/inspections/test-mode"
+          aria-label="Admin Inspection Test Mode"
+          title="Admin Inspection Test Mode"
+          className="inline-flex items-center gap-1.5 rounded-xl border border-[#E8D3B7] bg-[#FFF6E9] px-3 py-2 text-[10px] font-bold text-[#9A5A24] transition hover:bg-[#FCEBD7]"
+        >
+          <ClipboardCheck size={13} />
+          <span className="hidden md:inline">Test Mode</span>
+        </Link>
+      )}
       <button
         type="button"
         onClick={() => void signOut()}

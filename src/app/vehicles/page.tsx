@@ -20,6 +20,11 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { getInspectionActor } from "@/lib/supabase/staff";
 import AuthControls from "@/app/_components/AuthControls";
+import {
+  getLatestTestModeResultForVehicle,
+  type TestModeCheckpointResult,
+  type TestModeResult,
+} from "@/app/inspections/test-mode-results";
 
 type Vehicle = {
   id: string;
@@ -63,6 +68,7 @@ export default function VehiclesPage() {
   const [loading, setLoading] = useState(true);
   const [authorized, setAuthorized] = useState(false);
   const [canRegister, setCanRegister] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [actorId, setActorId] = useState("");
   const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -72,6 +78,18 @@ export default function VehiclesPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
+  const [testResultState, setTestResultState] = useState<{
+    vehicleId: string;
+    status: "idle" | "loading" | "ready" | "error";
+    result: TestModeResult | null;
+    error: string;
+  }>({
+    vehicleId: "",
+    status: "idle",
+    result: null,
+    error: "",
+  });
+  const [expandedTestResultId, setExpandedTestResultId] = useState("");
 
   const loadVehicles = useCallback(async () => {
     setLoading(true);
@@ -81,6 +99,7 @@ export default function VehiclesPage() {
       if (!actor) {
         setAuthorized(false);
         setCanRegister(false);
+        setIsAdmin(false);
         setActorId("");
         setVehicles([]);
         return;
@@ -90,6 +109,7 @@ export default function VehiclesPage() {
       setCanRegister(
         actor.profile.role === "admin" || actor.profile.role === "inspector"
       );
+      setIsAdmin(actor.profile.role === "admin");
       setActorId(actor.profile.id);
       const { data, error: fetchError } = await supabase
         .from("vehicles")
@@ -105,6 +125,7 @@ export default function VehiclesPage() {
     } catch (loadError: unknown) {
       setAuthorized(false);
       setCanRegister(false);
+      setIsAdmin(false);
       setActorId("");
       setVehicles([]);
       setError(
@@ -120,6 +141,48 @@ export default function VehiclesPage() {
   useEffect(() => {
     void loadVehicles();
   }, [loadVehicles]);
+
+  const selectedVehicleId = selectedVehicle?.id ?? "";
+  useEffect(() => {
+    if (!selectedVehicleId || !isAdmin) {
+      setTestResultState({
+        vehicleId: selectedVehicleId,
+        status: "idle",
+        result: null,
+        error: "",
+      });
+      setExpandedTestResultId("");
+      return;
+    }
+
+    setTestResultState({
+      vehicleId: selectedVehicleId,
+      status: "loading",
+      result: null,
+      error: "",
+    });
+    setExpandedTestResultId("");
+    try {
+      const result =
+        getLatestTestModeResultForVehicle(selectedVehicleId);
+      setTestResultState({
+        vehicleId: selectedVehicleId,
+        status: "ready",
+        result,
+        error: "",
+      });
+    } catch (testResultError: unknown) {
+      setTestResultState({
+        vehicleId: selectedVehicleId,
+        status: "error",
+        result: null,
+        error:
+          testResultError instanceof Error
+            ? testResultError.message
+            : "Saved Test Mode results could not be read.",
+      });
+    }
+  }, [isAdmin, selectedVehicleId]);
 
   const filteredVehicles = useMemo(() => {
     return vehicles.filter((vehicle) => {
@@ -570,7 +633,7 @@ export default function VehiclesPage() {
         {/* VEHICLE DETAILS */}
         {selectedVehicle && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#10271C]/60 p-3 backdrop-blur-sm">
-            <div className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
               <div className="mb-5 flex items-center justify-between">
                 <h2 className="text-lg font-bold">Vehicle Details</h2>
                 <button onClick={() => setSelectedVehicle(null)} className="rounded-lg p-2 hover:bg-[#F4F2EC]">
@@ -599,6 +662,18 @@ export default function VehiclesPage() {
                 <Detail label="Engine Number" value={selectedVehicle.engine_number} />
                 <Detail label="Owners" value={selectedVehicle.owner_count} />
               </div>
+              {isAdmin && (
+                <VehicleTestResultsSection
+                  state={testResultState}
+                  vehicleId={selectedVehicle.id}
+                  expandedResultId={expandedTestResultId}
+                  onToggleDetails={(resultId) =>
+                    setExpandedTestResultId((current) =>
+                      current === resultId ? "" : resultId
+                    )
+                  }
+                />
+              )}
             </div>
           </div>
         )}
@@ -623,6 +698,274 @@ export default function VehiclesPage() {
       `}</style>
     </main>
   );
+}
+
+function VehicleTestResultsSection({
+  state,
+  vehicleId,
+  expandedResultId,
+  onToggleDetails,
+}: {
+  state: {
+    vehicleId: string;
+    status: "idle" | "loading" | "ready" | "error";
+    result: TestModeResult | null;
+    error: string;
+  };
+  vehicleId: string;
+  expandedResultId: string;
+  onToggleDetails: (resultId: string) => void;
+}) {
+  const isCurrentVehicle = state.vehicleId === vehicleId;
+  const result = isCurrentVehicle ? state.result : null;
+  const isLoading =
+    state.status === "loading" || !isCurrentVehicle;
+  const isError = isCurrentVehicle && state.status === "error";
+
+  return (
+    <section className="mt-6 border-t border-[#E8E5DC] pt-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-bold text-[#28543D]">
+          Inspection Test Results
+        </h3>
+        <span className="rounded-full bg-[#FFF0E0] px-3 py-1.5 text-[9px] font-extrabold tracking-wide text-[#A95719]">
+          TEST DATA / SIMULATION
+        </span>
+      </div>
+      <p className="mt-2 text-[10px] leading-5 text-[#92968C]">
+        Local Test Mode results only. They are separate from live inspection
+        history, official ratings, certificates, repairs, and QC records.
+      </p>
+
+      {isLoading ? (
+        <p className="mt-4 text-xs text-[#697568]" role="status">
+          Loading local simulation result…
+        </p>
+      ) : isError ? (
+        <p
+          className="mt-4 rounded-xl border border-[#EBC4BA] bg-[#FCE9E5] p-3 text-xs leading-5 text-[#9F4A3A]"
+          role="alert"
+        >
+          Saved Test Mode data is unavailable: {state.error} No test result is
+          being shown as a live inspection.
+        </p>
+      ) : !result ? (
+        <p className="mt-4 rounded-xl bg-[#FCFBF7] p-3 text-xs leading-5 text-[#697568]">
+          No saved Test Mode result exists for this vehicle in this browser.
+        </p>
+      ) : (
+        <>
+          <div className="mt-4 rounded-xl border border-[#E9D1A8] bg-[#FFFBF4] p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-bold text-[#344337]">
+                  {result.registrationNumber} · {result.vehicleType}
+                </p>
+                <p className="mt-1 text-[10px] text-[#7C8579]">
+                  Simulated at{" "}
+                  {new Date(result.simulatedAt).toLocaleString("en-IN")}
+                </p>
+              </div>
+              <span className="rounded-full bg-[#FFF0E0] px-2.5 py-1 text-[8px] font-extrabold text-[#A95719]">
+                TEST DATA
+              </span>
+            </div>
+
+            <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <TestResultValue
+                label="Progress"
+                value={`${result.counts.completed}/${result.counts.applicable} complete`}
+              />
+              <TestResultValue
+                label="Pending / unresolved"
+                value={`${result.counts.pending} / ${result.counts.unresolved}`}
+              />
+              <TestResultValue
+                label="Simulated evidence"
+                value={`${result.evidenceStatus.simulatedMediaCount}/${result.evidenceStatus.requiredMediaCount} media · ${result.evidenceStatus.missingMediaCount} missing`}
+              />
+              <TestResultValue
+                label="Simulated safety"
+                value={result.safetyStatus}
+                alert={result.safetyStatus !== "CLEARED"}
+              />
+            </div>
+
+            {result.criticalFailures.length > 0 && (
+              <div className="mt-3 rounded-lg bg-[#FCE9E5] p-3 text-[10px] text-[#9F4A3A]">
+                <p className="font-bold">
+                  Simulated critical failures ({result.criticalFailures.length})
+                </p>
+                <ul className="mt-1 space-y-1">
+                  {result.criticalFailures.map((failure) => (
+                    <li key={failure.checkpointNo}>
+                      #{failure.checkpointNo} · {failure.name}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => onToggleDetails(result.id)}
+              className="mt-4 rounded-lg border border-[#D8C6A9] bg-white px-3 py-2 text-[10px] font-bold text-[#805B2E] transition hover:bg-[#FFF6E9]"
+              aria-expanded={expandedResultId === result.id}
+            >
+              {expandedResultId === result.id
+                ? "Hide checkpoint details"
+                : `View checkpoint details (${result.checkpoints.length})`}
+            </button>
+          </div>
+
+          {expandedResultId === result.id && (
+            <div className="mt-3 max-h-80 space-y-2 overflow-y-auto rounded-xl border border-[#E8E5DC] bg-[#FCFBF7] p-3">
+              {result.checkpoints.map((checkpoint) => (
+                <article
+                  key={checkpoint.checkpointNo}
+                  className="rounded-lg border border-[#EEECE5] bg-white p-3"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <p className="text-[10px] font-bold text-[#344337]">
+                        #{checkpoint.checkpointNo} · {checkpoint.name}
+                      </p>
+                      <p className="mt-1 text-[9px] text-[#92968C]">
+                        Section {checkpoint.sectionNo} · {checkpoint.sectionName}
+                        {" · "}
+                        {checkpoint.classification} · {checkpoint.assessmentMethod}
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-[#F3F0E7] px-2 py-1 text-[8px] font-bold uppercase text-[#697568]">
+                      {checkpoint.status.replace("_", " ")}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[9px] text-[#697568]">
+                    {checkpoint.assessment.resultStatus && (
+                      <span>
+                        Result: {checkpoint.assessment.resultStatus.replace("_", " ")}
+                      </span>
+                    )}
+                    {checkpoint.assessment.cosmeticScore !== null && (
+                      <span>
+                        Cosmetic: {checkpoint.assessment.cosmeticScore}/5
+                      </span>
+                    )}
+                    {checkpoint.assessment.measuredValue && (
+                      <span>
+                        Measured: {checkpoint.assessment.measuredValue}{" "}
+                        {checkpoint.assessment.measuredUnit}
+                      </span>
+                    )}
+                    {checkpoint.assessment.expectedValue && (
+                      <span>
+                        Test reference: {checkpoint.assessment.expectedValue}
+                      </span>
+                    )}
+                    {checkpoint.assessment.recordedValue && (
+                      <span>
+                        Recorded: {checkpoint.assessment.recordedValue}
+                      </span>
+                    )}
+                    {checkpoint.assessment.matchStatus && (
+                      <span>Match: {checkpoint.assessment.matchStatus}</span>
+                    )}
+                    {checkpoint.assessment.countValue && (
+                      <span>Count: {checkpoint.assessment.countValue}</span>
+                    )}
+                    {checkpoint.assessment.isDisclosed !== null && (
+                      <span>
+                        Disclosure:{" "}
+                        {checkpoint.assessment.isDisclosed
+                          ? "Disclosed"
+                          : "Undisclosed"}
+                      </span>
+                    )}
+                    {checkpoint.autoValue && (
+                      <span>Automatic value: {checkpoint.autoValue}</span>
+                    )}
+                  </div>
+                  {checkpoint.evidence.length > 0 && (
+                    <p className="mt-2 text-[8px] font-bold uppercase text-[#A95719]">
+                      {checkpoint.evidence
+                        .map((item) => item.label)
+                        .join(" · ")}
+                    </p>
+                  )}
+                  <p className="mt-2 text-[9px] text-[#697568]">
+                    Evidence required: {checkpoint.evidenceRequired} ·{" "}
+                    {getTestEvidenceStatus(checkpoint)}
+                  </p>
+                  {checkpoint.assessment.observation && (
+                    <p className="mt-2 text-[9px] text-[#697568]">
+                      Observation: {checkpoint.assessment.observation}
+                    </p>
+                  )}
+                  {checkpoint.assessment.issueDescription && (
+                    <p className="mt-2 text-[9px] text-[#697568]">
+                      Simulated issue: {checkpoint.assessment.issueDescription}
+                    </p>
+                  )}
+                  {checkpoint.criticalFailure && (
+                    <p className="mt-2 text-[9px] font-bold text-[#B44936]">
+                      Simulated critical failure · TEST DATA
+                    </p>
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function TestResultValue({
+  label,
+  value,
+  alert = false,
+}: {
+  label: string;
+  value: string;
+  alert?: boolean;
+}) {
+  return (
+    <div className="rounded-lg bg-white p-2.5">
+      <p className="text-[8px] font-bold uppercase tracking-wide text-[#92968C]">
+        {label} · TEST DATA
+      </p>
+      <p
+        className={`mt-1 break-words text-[10px] font-bold ${
+          alert ? "text-[#B44936]" : "text-[#344337]"
+        }`}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function getTestEvidenceStatus(
+  checkpoint: TestModeCheckpointResult
+): string {
+  if (
+    checkpoint.status === "not_applicable" ||
+    checkpoint.evidenceRequired === "Not required"
+  ) {
+    return "Not required";
+  }
+
+  const mediaTypes = new Set(
+    checkpoint.evidence.map((item) => item.mediaType)
+  );
+  const hasRequiredMedia =
+    checkpoint.evidenceRequired === "Photo+Video"
+      ? mediaTypes.has("photo") && mediaTypes.has("video")
+      : mediaTypes.has(
+          checkpoint.evidenceRequired === "Photo" ? "photo" : "video"
+        );
+  return hasRequiredMedia ? "Simulated evidence present" : "Missing";
 }
 
 function StatCard({
