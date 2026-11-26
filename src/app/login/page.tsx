@@ -6,10 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Bike, Loader2, LockKeyhole, ShieldAlert } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import {
-  getInspectionActor,
-  getWorkspacePath,
-} from "@/lib/supabase/staff";
+import { getInspectionActor } from "@/lib/supabase/staff";
 
 export default function LoginPage() {
   const supabase = useMemo(() => createClient(), []);
@@ -34,7 +31,7 @@ export default function LoginPage() {
 
         const actor = await getInspectionActor(supabase);
         if (actor) {
-          router.replace(getWorkspacePath(actor.profile.role));
+          router.replace("/dashboard");
           router.refresh();
           return;
         }
@@ -96,7 +93,7 @@ export default function LoginPage() {
         return;
       }
 
-      router.replace(getWorkspacePath(actor.profile.role));
+      router.replace("/dashboard");
       router.refresh();
     } catch (error: unknown) {
       const { error: signOutError } = await supabase.auth.signOut();
