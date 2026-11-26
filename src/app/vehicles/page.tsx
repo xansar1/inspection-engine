@@ -106,9 +106,7 @@ export default function VehiclesPage() {
       }
 
       setAuthorized(true);
-      setCanRegister(
-        actor.profile.role === "admin" || actor.profile.role === "inspector"
-      );
+      setCanRegister(true);
       setIsAdmin(actor.profile.role === "admin");
       setActorId(actor.profile.id);
       const { data, error: fetchError } = await supabase
