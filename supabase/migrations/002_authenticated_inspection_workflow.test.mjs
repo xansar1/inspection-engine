@@ -123,5 +123,8 @@ test("mechanic and quality-controller actions use role-specific server RPCs", ()
   assert.match(inspectionClient, /"verify_repair_job"/);
   assert.match(inspectionClient, /"finalize_quality_review"/);
   assert.match(inspectionClient, /"start_reinspection"/);
-  assert.match(inspectionClient, /inspection\.status !== "rejected"/);
+  assert.match(
+    inspectionClient,
+    /!\["submitted", "approved", "rejected", "cancelled"\]\.includes\(\s*inspection\.status\s*\)/
+  );
 });

@@ -261,14 +261,21 @@ export default function InspectionChecklist() {
   const [loadError, setLoadError] = useState("");
   const [authenticationRequired, setAuthenticationRequired] = useState(false);
   const [requestId, setRequestId] = useState(0);
+  const [workspaceMode, setWorkspaceMode] = useState<"inspection" | "workflow">(
+    "inspection"
+  );
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setLoadError("");
     setAuthenticationRequired(false);
+    setActor(null);
+    setChecklist(null);
+    setWorkspaceMode("inspection");
 
     void (async () => {
+      let actorResolved = false;
       try {
         const authenticatedActor = await getInspectionActor(supabase);
         if (cancelled) return;
@@ -279,20 +286,20 @@ export default function InspectionChecklist() {
           return;
         }
 
+        actorResolved = true;
         setActor(authenticatedActor);
-        if (
+        setWorkspaceMode(
           authenticatedActor.profile.role === "mechanic" ||
-          authenticatedActor.profile.role === "quality_controller"
-        ) {
-          setChecklist(null);
-          return;
-        }
+            authenticatedActor.profile.role === "quality_controller"
+            ? "workflow"
+            : "inspection"
+        );
         const loadedChecklist = await getInspectionChecklist(supabase);
         if (!cancelled) setChecklist(loadedChecklist);
       } catch (error: unknown) {
         if (cancelled) return;
-        setActor(null);
         setChecklist(null);
+        if (!actorResolved) setActor(null);
         setLoadError(
           error instanceof Error
             ? error.message
@@ -329,7 +336,7 @@ export default function InspectionChecklist() {
     );
   }
 
-  if (loadError) {
+  if (loadError && workspaceMode === "inspection") {
     return (
       <DemoModulePage
         title="260-point Vehicle Inspection"
@@ -352,6 +359,20 @@ export default function InspectionChecklist() {
           >
             Retry checklist load
           </button>
+          {actor &&
+            (actor.profile.role === "mechanic" ||
+              actor.profile.role === "quality_controller") && (
+              <button
+                type="button"
+                onClick={() => setWorkspaceMode("workflow")}
+                className={`${demoSubtleButtonClass} mt-4`}
+              >
+                Return to{" "}
+                {actor.profile.role === "mechanic"
+                  ? "assigned repair work"
+                  : "quality control"}
+              </button>
+            )}
         </DemoPanel>
       </DemoModulePage>
     );
@@ -381,10 +402,17 @@ export default function InspectionChecklist() {
   if (!actor) return null;
 
   if (
-    actor.profile.role === "mechanic" ||
-    actor.profile.role === "quality_controller"
+    workspaceMode === "workflow" &&
+    (actor.profile.role === "mechanic" ||
+      actor.profile.role === "quality_controller")
   ) {
-    return <WorkshopWorkflowWorkspace actor={actor} supabase={supabase} />;
+    return (
+      <WorkshopWorkflowWorkspace
+        actor={actor}
+        supabase={supabase}
+        onOpenInspection={() => setWorkspaceMode("inspection")}
+      />
+    );
   }
 
   if (
@@ -423,6 +451,7 @@ export default function InspectionChecklist() {
       inspectionChecklist={checklist}
       actor={actor}
       supabase={supabase}
+      onOpenWorkshopWorkflow={() => setWorkspaceMode("workflow")}
     />
   );
 }
@@ -431,10 +460,12 @@ function InspectionWorkspace({
   inspectionChecklist,
   actor,
   supabase,
+  onOpenWorkshopWorkflow,
 }: {
   inspectionChecklist: InspectionChecklistData;
   actor: InspectionActor;
   supabase: ReturnType<typeof createClient>;
+  onOpenWorkshopWorkflow: () => void;
 }) {
   const [vehicles, setVehicles] = useState<InspectionVehicle[]>([]);
   const [mechanics, setMechanics] = useState<WorkshopMechanic[]>([]);
@@ -1246,7 +1277,10 @@ function InspectionWorkspace({
     if (
       !selectedVehicle ||
       starting ||
-      (inspection !== null && inspection.status !== "rejected")
+      (inspection !== null &&
+        !["submitted", "approved", "rejected", "cancelled"].includes(
+          inspection.status
+        ))
     ) {
       return;
     }
@@ -1282,7 +1316,7 @@ function InspectionWorkspace({
         }
         if (!existing) {
           setSavingMessage(
-            "This vehicle already has an open inspection owned by another active inspector."
+            "This vehicle already has an open inspection owned by another active staff member."
           );
           return;
         }
@@ -1626,6 +1660,11 @@ function InspectionWorkspace({
     } finally {
       setSaving(false);
     }
+  }
+
+  async function openWorkshopWorkflow() {
+    if (dirty && !(await saveInspectionProgress())) return;
+    onOpenWorkshopWorkflow();
   }
 
   function captureLocation() {
@@ -2086,7 +2125,10 @@ function InspectionWorkspace({
     actor.profile.role === "admin" ||
     actor.profile.role === "quality_controller";
   const canStartInspection =
-    inspection === null || inspection.status === "rejected";
+    inspection === null ||
+    ["submitted", "approved", "rejected", "cancelled"].includes(
+      inspection.status
+    );
 
   return (
     <DemoModulePage
@@ -2096,9 +2138,27 @@ function InspectionWorkspace({
       modeLabel="LIVE WORKFLOW"
       notice={`${actor.profile.full_name} · ${actor.profile.role}. Changes are shown as saved only after Supabase confirms them.`}
     >
+      {(actor.profile.role === "mechanic" ||
+        actor.profile.role === "quality_controller") && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[#E8E3D8] bg-white p-2">
+          <span className="px-2 text-xs font-bold text-[#315D40]">
+            Vehicle inspection
+          </span>
+          <button
+            type="button"
+            onClick={() => void openWorkshopWorkflow()}
+            disabled={saving || submitting || restoring}
+            className={demoSubtleButtonClass}
+          >
+            {actor.profile.role === "mechanic"
+              ? "Assigned repair work"
+              : "Quality control"}
+          </button>
+        </div>
+      )}
       <DemoPanel
         title="Vehicle and inspection session"
-        description="Vehicles and open inspection sessions are loaded from Supabase. New sessions are linked to the signed-in inspector."
+        description="Vehicles and open inspection sessions are loaded from Supabase. New sessions are linked to the signed-in staff member."
       >
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto_auto] lg:items-end">
           <label className="block">
@@ -2178,7 +2238,7 @@ function InspectionWorkspace({
           </div>
           <p className="text-[10px] text-[#92958A]">
             {inspection
-              ? `Inspector: ${actor.profile.full_name} · ${inspection.id}`
+              ? `Staff member: ${actor.profile.full_name} · ${inspection.id}`
               : "No inspection session exists until you start one."}
           </p>
         </div>
@@ -2349,7 +2409,7 @@ function InspectionWorkspace({
 
           {inspection?.status === "repair_required" &&
             (actor.profile.role === "admin" ||
-              actor.profile.role === "inspector") && (
+              inspection.inspector_id === actor.user.id) && (
               <button
                 type="button"
                 onClick={() => void startReinspection()}
@@ -2361,7 +2421,7 @@ function InspectionWorkspace({
                   : "Start linked reinspection"}
               </button>
             )}
-
+            
           {(inspection?.status === "submitted" ||
             inspection?.status === "qc_pending") &&
             canReviewQuality && (
@@ -3161,9 +3221,11 @@ type WorkflowVehicleRow = {
 function WorkshopWorkflowWorkspace({
   actor,
   supabase,
+  onOpenInspection,
 }: {
   actor: InspectionActor;
   supabase: ReturnType<typeof createClient>;
+  onOpenInspection: () => void;
 }) {
   const [inspections, setInspections] = useState<WorkflowInspectionRow[]>([]);
   const [vehicles, setVehicles] = useState<WorkflowVehicleRow[]>([]);
@@ -3347,6 +3409,32 @@ function WorkshopWorkflowWorkspace({
       modeLabel="LIVE WORKFLOW"
       notice={`${actor.profile.full_name} · ${actor.profile.role}. Every action is checked and recorded by Supabase.`}
     >
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[#E8E3D8] bg-white p-2">
+        <button
+          type="button"
+          onClick={() => {
+            const hasUnsavedNotes = Object.values(notes).some((note) =>
+              note.trim().length > 0
+            );
+            if (
+              hasUnsavedNotes &&
+              !window.confirm(
+                "Switching workspaces will discard unsaved repair or QC notes. Continue?"
+              )
+            ) {
+              return;
+            }
+            onOpenInspection();
+          }}
+          className={demoButtonClass}
+        >
+          <ClipboardCheck size={15} />
+          Open 260-point vehicle inspection
+        </button>
+        <span className="px-2 text-xs font-bold text-[#697267]">
+          {isMechanic ? "Assigned repair work" : "Quality control"}
+        </span>
+      </div>
       {statusMessage && (
         <p role="status" className="rounded-xl bg-[#F3F4ED] p-3 text-xs text-[#526052]">
           {statusMessage}
